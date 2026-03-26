@@ -1,169 +1,280 @@
 # ecp-lib
 
-`ecp-lib` — Python бібліотека для RSA/ЕЦП, підписів, challenge-response та опційної інтеграції з Django auth backend.
+`ecp-lib` — це невелика Django-бібліотека для роботи з RSA ЕЦП.
 
-Пакет експортує стабільний Python namespace `ecp_lib` і встановлює консольну команду `ecp-lib`.
+Вона дає:
+
+- генерацію RSA ключів
+- підпис payload приватним ключем
+- перевірку підпису через public key
+- модель для збереження public key користувача
+- middleware для перевірки RSA-підпису при login POST
+- helper-функції для інтеграції в реєстрацію і логін
+
+Бібліотека не створює:
+
+- свої views
+- свої urls
+- service layer
+- складну архітектуру
+
+## Структура
+
+```text
+ecp_lib/
+  __init__.py
+  auth.py
+  crypto.py
+  validators.py
+  middleware.py
+  models.py
+  migrations/
+```
 
 ## Встановлення
-
-Базова бібліотека:
 
 ```bash
 pip install ecp-lib
 ```
 
-З Django-інтеграцією:
+Для Django:
 
 ```bash
 pip install "ecp-lib[django]"
 ```
 
-Для локальної розробки:
+## Django налаштування
 
-```bash
-pip install -e .
-```
-
-## Структура пакету
-
-```text
-ecp_lib/
-  __init__.py
-  auth/
-    backend.py
-    challenges.py
-  crypto/
-    keys.py
-    signatures.py
-  core/
-    exceptions.py
-    settings.py
-    validators.py
-  cli.py
-```
-
-Сумісність:
-- `ecp_lib` є канонічним namespace для імпортів.
-- Crypto API та CLI працюють без встановленого `django`.
-- Django backend, challenges і `AppConfig` доступні при встановленому extra `django`.
-
-## Django інтеграція
+У `settings.py`:
 
 ```python
 INSTALLED_APPS = [
-    # ...
     "ecp_lib",
 ]
 
 MIDDLEWARE = [
-    # ...
-    "ecp_lib.middleware.AttachUserPublicKeyMiddleware",
+    "ecp_lib.middleware.ECPMiddleware",
 ]
-
-AUTHENTICATION_BACKENDS = [
-    "ecp_lib.backends.ECPAuthenticationBackend",
-    "django.contrib.auth.backends.ModelBackend",
-]
-
-ECP_AUTH = {
-    "USER_LOOKUP_FIELD": "username",
-    "PUBLIC_KEY_FIELD": "ecp_public_key.public_key",
-    "CHALLENGE_TTL_SECONDS": 300,
-    "CHALLENGE_CLOCK_SKEW_SECONDS": 30,
-    "IDENTIFIER_MAX_LENGTH": 150,
-    "MAX_SIGNATURE_LENGTH": 8192,
-}
 ```
 
-Модель ключа:
+## Основний API
+
+Через кореневий пакет:
 
 ```python
-from ecp_lib.models import ECPUserPublicKey
-
-ECPUserPublicKey.objects.update_or_create(
-    user=user,
-    defaults={"public_key": public_key_pem},
+from ecp_lib import (
+    ECPKey,
+    ECPMiddleware,
+    authenticate_with_private_key,
+    create_challenge,
+    create_user_keys,
+    generate_keys,
+    read_private_key,
+    sanitize,
+    sign,
+    validate_public_key,
+    verify,
+    verify_challenge,
 )
 ```
 
-Приклад авторизації:
+## Генерація ключів
 
 ```python
-from django.contrib.auth import authenticate
-from ecp_lib import issue_authentication_challenge
+from ecp_lib.crypto import generate_keys
 
-challenge = issue_authentication_challenge("alice")
-# Клієнт підписує challenge.challenge приватним ключем
+private_key, public_key = generate_keys()
+```
 
-user = authenticate(
+Що використовується:
+
+- RSA 2048+
+- RSA-PSS
+- SHA-256
+- base64 для підпису
+
+## Підпис і перевірка
+
+```python
+from ecp_lib.crypto import sign, verify
+
+signature = sign(private_key, "hello")
+is_valid = verify(public_key, "hello", signature)
+```
+
+## Валідація
+
+### sanitize
+
+```python
+from ecp_lib.validators import sanitize
+
+value = sanitize(" alice ")
+```
+
+### validate_public_key
+
+```python
+from ecp_lib.validators import validate_public_key
+
+validate_public_key(public_key)
+```
+
+Функція перевіряє:
+
+- PEM формат
+- що ключ RSA
+- що ключ не менше 2048 біт
+
+## Модель
+
+```python
+from ecp_lib.models import ECPKey
+```
+
+```python
+class ECPKey(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    public_key = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+```
+
+У БД зберігається тільки `public_key`.
+
+`private_key` сервер не зберігає.
+
+## Реєстрація користувача
+
+Якщо логіку реєстрації хочеш тримати у своєму view, але генерацію ключів винести в бібліотеку:
+
+```python
+from ecp_lib.auth import create_user_keys
+
+
+class RegisterView(CreateView):
+    ...
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+
+        private_key = create_user_keys(self.object)
+
+        response["Content-Disposition"] = 'attachment; filename="private.pem"'
+        response.write(private_key)
+        return response
+```
+
+Що робить `create_user_keys(user)`:
+
+1. генерує нову пару ключів
+2. зберігає `public_key` в `ECPKey`
+3. повертає `private_key` як PEM-рядок
+
+## Читання private key із файлу
+
+```python
+from ecp_lib.auth import read_private_key
+
+private_key = read_private_key(request.FILES["private_key"])
+```
+
+## Аутентифікація з приватним ключем
+
+```python
+from ecp_lib.auth import authenticate_with_private_key
+
+user, error = authenticate_with_private_key(
     request=request,
-    identifier="alice",
-    challenge=challenge.challenge,
-    signature=signature_from_client,
+    username="alice",
+    password="secret",
+    private_key=private_key_pem,
 )
 ```
 
-## CLI (Entry Point)
+Що робить ця функція:
 
-Після встановлення пакет реєструє entry point:
+1. перевіряє `username/password` через Django `authenticate`
+2. знаходить `ECPKey` користувача
+3. створює test challenge
+4. підписує challenge приватним ключем
+5. перевіряє підпис через збережений `public_key`
 
-```bash
-ecp-lib --help
+Повертає:
+
+- `(user, None)` якщо все добре
+- `(None, "error text")` якщо перевірка не пройшла
+
+## Challenge helper-и
+
+### create_challenge
+
+```python
+from ecp_lib.auth import create_challenge
+
+challenge = create_challenge()
 ```
 
-Альтернатива без встановленого script wrapper:
+### verify_challenge
 
-```bash
-python -m ecp_lib.cli --help
+```python
+from ecp_lib.auth import verify_challenge
+
+is_valid = verify_challenge(private_key, public_key, challenge)
 ```
 
-### Генерація ключів
+Це корисно, коли треба перевірити, що ключова пара справді відповідає одна одній.
 
-```bash
-ecp-lib generate-keys --format pem
+## Middleware
+
+`ECPMiddleware` не створює логін і не змінює стандартний `LoginView`.
+
+Воно просто:
+
+1. спрацьовує тільки на `POST`
+2. якщо в запиті немає `signature`, нічого не чіпає
+3. якщо є `signature`, бере:
+   - `username`
+   - `signature`
+   - `challenge` або `password`
+4. знаходить `public_key` користувача
+5. перевіряє підпис
+6. якщо щось не так, повертає `403`
+
+## Які поля очікує middleware
+
+Для login POST:
+
+- `username`
+- `signature`
+- `challenge` або `password`
+
+## Приклад LoginView
+
+```python
+class LoginView(DjangoLoginView):
+    ...
 ```
 
-```bash
-ecp-lib generate-keys --format json
-```
-
-### Валідація пари ключів
-
-```bash
-ecp-lib validate-keys --private-key-file private.pem --public-key-file public.pem
-```
-
-### Підпис payload
-
-```bash
-ecp-lib sign --private-key-file private.pem --payload "hello"
-```
-
-```bash
-ecp-lib sign --private-key-file private.pem --payload-file payload.txt
-```
-
-### Перевірка підпису
-
-```bash
-ecp-lib verify --public-key-file public.pem --payload "hello" --signature "<base64>"
-```
-
-```bash
-ecp-lib verify --public-key-file public.pem --payload-file payload.txt --signature "<base64>"
-```
-
-Коди завершення CLI:
-- `0` — успіх
-- `1` — підпис невалідний (`verify`)
-- `2` — помилка вводу/валідації/виконання
+Нічого міняти не потрібно, якщо вся RSA-перевірка вже йде через middleware або через виклик `authenticate_with_private_key(...)` у власній логіці.
 
 ## Безпека
 
-- One-time challenge + anti-replay через cache.
-- Валідація формату identifier, payload і signature.
-- RSA-PSS + SHA-256 для підпису/верифікації.
-- Деталізовані structured exceptions для розробників.
+Бібліотека використовує:
+
+- RSA 2048+
+- RSA-PSS
+- SHA-256
+- base64 підпис
+- перевірку PEM
+- санітизацію input
+
+Не зберігається:
+
+- `private_key`
+
+Зберігається:
+
+- тільки `public_key`
 
 ## Тести
 
@@ -171,4 +282,4 @@ ecp-lib verify --public-key-file public.pem --payload-file payload.txt --signatu
 python3 -m unittest discover -s tests -v
 ```
 
-Розширена документація: `docs/PACKAGE_GUIDE.md`.
+Детальніша документація: `docs/PACKAGE_GUIDE.md`.

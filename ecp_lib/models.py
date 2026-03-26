@@ -4,19 +4,23 @@ from django.conf import settings
 from django.db import models
 
 
-class ECPUserPublicKey(models.Model):
+class ECPKey(models.Model):
+    # Один користувач має один public key.
+    # Цього достатньо для простої схеми: реєстрація -> збереження ключа -> перевірка логіну.
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="ecp_public_key",
+        related_name="ecp_key",
     )
+    # У БД зберігаємо тільки public key.
+    # Private key ніколи не зберігається на сервері.
     public_key = models.TextField()
+    # Службове поле, щоб було видно час створення запису.
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "ECP user public key"
-        verbose_name_plural = "ECP user public keys"
+        verbose_name = "ECP key"
+        verbose_name_plural = "ECP keys"
 
     def __str__(self) -> str:
-        return f"ECP public key for user_id={self.user_id}"
+        return f"ECP key for user_id={self.user_id}"

@@ -12,9 +12,4 @@ setup(
             'django>=4.2,<6.0',
         ],
     },
-    entry_points={
-        "console_scripts": [
-            "ecp-lib=ecp_lib.cli:main",
-        ],
-    },
 )

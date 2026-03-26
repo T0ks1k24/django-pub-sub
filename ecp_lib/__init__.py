@@ -2,48 +2,43 @@ from __future__ import annotations
 
 from importlib import import_module
 
+# Кореневий модуль нічого не імпортує напряму, а працює через lazy imports.
+# Це важливо для Django, щоб пакет безпечно підключався через INSTALLED_APPS
+# і не тягнув моделі занадто рано під час apps.populate().
 __all__ = [
-    "AuthenticationChallenge",
-    "AttachUserPublicKeyMiddleware",
-    "ChallengeValidationError",
-    "ECPAuthenticationBackend",
-    "ECPAuthenticationError",
-    "ECPError",
-    "ECPUserPublicKey",
-    "KeyValidationError",
-    "SignatureVerificationError",
-    "ValidationError",
-    "generate_rsa_key_pair",
-    "generating_rsa_keys",
-    "issue_authentication_challenge",
-    "sign_payload",
-    "validate_rsa_keys",
-    "verify_authentication_response",
-    "verify_signature",
+    "authenticate_with_private_key",
+    "create_challenge",
+    "create_user_keys",
+    "ECPKey",
+    "ECPMiddleware",
+    "generate_keys",
+    "read_private_key",
+    "sanitize",
+    "sign",
+    "validate_public_key",
+    "verify_challenge",
+    "verify",
 ]
 
 _EXPORTS = {
-    "AuthenticationChallenge": ("ecp_lib.auth.challenges", "AuthenticationChallenge"),
-    "AttachUserPublicKeyMiddleware": ("ecp_lib.auth.middleware", "AttachUserPublicKeyMiddleware"),
-    "ChallengeValidationError": ("ecp_lib.core.exceptions", "ChallengeValidationError"),
-    "ECPAuthenticationBackend": ("ecp_lib.auth.backend", "ECPAuthenticationBackend"),
-    "ECPAuthenticationError": ("ecp_lib.core.exceptions", "ECPAuthenticationError"),
-    "ECPError": ("ecp_lib.core.exceptions", "ECPError"),
-    "ECPUserPublicKey": ("ecp_lib.models", "ECPUserPublicKey"),
-    "KeyValidationError": ("ecp_lib.core.exceptions", "KeyValidationError"),
-    "SignatureVerificationError": ("ecp_lib.core.exceptions", "SignatureVerificationError"),
-    "ValidationError": ("ecp_lib.core.exceptions", "ValidationError"),
-    "generate_rsa_key_pair": ("ecp_lib.crypto", "generate_rsa_key_pair"),
-    "generating_rsa_keys": ("ecp_lib.crypto", "generating_rsa_keys"),
-    "issue_authentication_challenge": ("ecp_lib.auth.challenges", "issue_authentication_challenge"),
-    "sign_payload": ("ecp_lib.crypto", "sign_payload"),
-    "validate_rsa_keys": ("ecp_lib.crypto", "validate_rsa_keys"),
-    "verify_authentication_response": ("ecp_lib.auth.challenges", "verify_authentication_response"),
-    "verify_signature": ("ecp_lib.crypto", "verify_signature"),
+    "authenticate_with_private_key": ("ecp_lib.auth", "authenticate_with_private_key"),
+    "create_challenge": ("ecp_lib.auth", "create_challenge"),
+    "create_user_keys": ("ecp_lib.auth", "create_user_keys"),
+    "ECPKey": ("ecp_lib.models", "ECPKey"),
+    "ECPMiddleware": ("ecp_lib.middleware", "ECPMiddleware"),
+    "generate_keys": ("ecp_lib.crypto", "generate_keys"),
+    "read_private_key": ("ecp_lib.auth", "read_private_key"),
+    "sanitize": ("ecp_lib.validators", "sanitize"),
+    "sign": ("ecp_lib.crypto", "sign"),
+    "validate_public_key": ("ecp_lib.validators", "validate_public_key"),
+    "verify_challenge": ("ecp_lib.auth", "verify_challenge"),
+    "verify": ("ecp_lib.crypto", "verify"),
 }
 
 
 def __getattr__(name: str):
+    # Ледачий імпорт дозволяє працювати з API як з "плоским" пакетом,
+    # але не створює проблем під час старту Django.
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

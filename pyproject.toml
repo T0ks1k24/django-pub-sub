@@ -17,8 +17,5 @@ django = [
     "django>=4.2,<6.0",
 ]
 
-[project.scripts]
-ecp-lib = "ecp_lib.cli:main"
-
 [tool.setuptools.packages.find]
 include = ["ecp_lib*"]

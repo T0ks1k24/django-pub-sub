@@ -1,141 +1,412 @@
 # ecp-lib Package Guide
 
-## Overview
+## Призначення бібліотеки
 
-`ecp-lib` is a reusable Python library for RSA signatures with optional Django backend integration.
+`ecp-lib` — це проста бібліотека для Django, яка допомагає винести криптографічну логіку з view у reusable код.
 
-The canonical import namespace is `ecp_lib`.
+Бібліотека покриває три зони:
 
-Main capabilities:
-- RSA key generation and validation.
-- Payload signing and signature verification.
-- One-time challenge-response flow for EЦП authentication.
-- Django `AuthenticationBackend` integration.
-- CLI for operational tasks.
+1. криптографія
+2. валідація
+3. інтеграція з Django через модель і middleware
 
-## Module Structure
+## Що бібліотека робить
 
-- `ecp_lib.auth`
-  - `backend.py`: `ECPAuthenticationBackend`
-  - `challenges.py`: challenge issue/verification and anti-replay
-- `ecp_lib.crypto`
-  - `keys.py`: key generation and pair validation
-  - `signatures.py`: sign/verify primitives
-- `ecp_lib.core`
-  - `exceptions.py`: structured exceptions with error code and details
-  - `settings.py`: ECP settings adapter
-  - `validators.py`: input validation
-- `ecp_lib.cli`
-  - `main(argv=None)`: console entry point used by `ecp-lib`
+- генерує RSA ключі
+- підписує payload приватним ключем
+- перевіряє підпис через public key
+- зберігає public key користувача
+- читає private key з uploaded файлу
+- допомагає аутентифікувати користувача через приватний ключ
+- може рано блокувати невалідний login POST через middleware
 
-## Installation
+## Що бібліотека не робить
 
-Core library:
+- не створює URL
+- не створює власні views
+- не змушує змінювати існуючі `RegisterView` і `LoginView`
+- не зберігає `private_key`
+
+## Поточна структура
+
+```text
+ecp_lib/
+  __init__.py
+  auth.py
+  crypto.py
+  validators.py
+  middleware.py
+  models.py
+  migrations/
+```
+
+## Модулі
+
+### crypto.py
+
+Низькорівневі криптографічні функції:
+
+- `generate_keys()`
+- `sign()`
+- `verify()`
+
+### validators.py
+
+Функції перевірки і санітизації:
+
+- `sanitize()`
+- `validate_public_key()`
+- `validate_username()`
+- `validate_signature()`
+
+### models.py
+
+Модель:
+
+- `ECPKey`
+
+### middleware.py
+
+Middleware:
+
+- `ECPMiddleware`
+
+### auth.py
+
+Допоміжні функції для інтеграції з реєстрацією і логіном:
+
+- `create_user_keys()`
+- `read_private_key()`
+- `create_challenge()`
+- `verify_challenge()`
+- `authenticate_with_private_key()`
+
+## Модель ECPKey
+
+```python
+class ECPKey(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    public_key = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+```
+
+Логіка проста:
+
+- один користувач
+- один `public_key`
+- `private_key` не зберігається
+
+## Встановлення
 
 ```bash
 pip install ecp-lib
 ```
 
-With Django integration:
+Для Django:
 
 ```bash
 pip install "ecp-lib[django]"
 ```
 
-For editable development:
+## Django інтеграція
 
-```bash
-pip install -e .
-```
-
-## Django Configuration
+У `settings.py`:
 
 ```python
 INSTALLED_APPS = [
-    # ...
     "ecp_lib",
 ]
 
 MIDDLEWARE = [
-    # ...
-    "ecp_lib.middleware.AttachUserPublicKeyMiddleware",
+    "ecp_lib.middleware.ECPMiddleware",
 ]
-
-AUTHENTICATION_BACKENDS = [
-    "ecp_lib.backends.ECPAuthenticationBackend",
-    "django.contrib.auth.backends.ModelBackend",
-]
-
-ECP_AUTH = {
-    "USER_LOOKUP_FIELD": "username",
-    "PUBLIC_KEY_FIELD": "ecp_public_key.public_key",
-    "CHALLENGE_TTL_SECONDS": 300,
-    "CHALLENGE_CLOCK_SKEW_SECONDS": 30,
-    "IDENTIFIER_MAX_LENGTH": 150,
-    "MAX_SIGNATURE_LENGTH": 8192,
-}
 ```
 
-Зв'язок ключа з користувачем:
-- `ecp_lib.models.ECPUserPublicKey`
-- `user`: `OneToOneField(settings.AUTH_USER_MODEL)`
-- `public_key`: `TextField()`
-
-## Python API Quick Examples
+## Публічний API
 
 ```python
-from ecp_lib import generate_rsa_key_pair, sign_payload, verify_signature
-
-private_key, public_key = generate_rsa_key_pair()
-signature = sign_payload(private_key, "challenge")
-assert verify_signature(public_key, "challenge", signature)
+from ecp_lib import (
+    ECPKey,
+    ECPMiddleware,
+    authenticate_with_private_key,
+    create_challenge,
+    create_user_keys,
+    generate_keys,
+    read_private_key,
+    sanitize,
+    sign,
+    validate_public_key,
+    verify,
+    verify_challenge,
+)
 ```
+
+## Генерація ключів
 
 ```python
-from ecp_lib import issue_authentication_challenge, verify_authentication_response
+from ecp_lib.crypto import generate_keys
 
-challenge = issue_authentication_challenge("alice")
-# client signs challenge.challenge
-# verify_authentication_response(...) on server side
+private_key, public_key = generate_keys()
 ```
 
-## CLI Entry Point
+Функція:
 
-After installation, CLI command is available as:
+- генерує RSA 2048+
+- повертає PEM рядки
+
+Використовуються:
+
+- RSA
+- RSA-PSS
+- SHA-256
+
+## Підпис
+
+```python
+from ecp_lib.crypto import sign
+
+signature = sign(private_key, "login-test")
+```
+
+Повертається:
+
+- base64 рядок підпису
+
+## Перевірка підпису
+
+```python
+from ecp_lib.crypto import verify
+
+is_valid = verify(public_key, "login-test", signature)
+```
+
+## Валідація public key
+
+```python
+from ecp_lib.validators import validate_public_key
+
+validate_public_key(public_key)
+```
+
+Що перевіряється:
+
+- ключ є рядком
+- PEM не пошкоджений
+- ключ RSA
+- довжина не менше 2048 біт
+
+## sanitize
+
+```python
+from ecp_lib.validators import sanitize
+
+value = sanitize(" alice ")
+```
+
+`sanitize()`:
+
+- прибирає зайві пробіли
+- блокує порожні значення
+- блокує control characters
+- блокує занадто довгі значення
+
+## Реєстрація користувача
+
+### create_user_keys
+
+```python
+from ecp_lib.auth import create_user_keys
+
+private_key = create_user_keys(user)
+```
+
+Функція:
+
+1. генерує `private_key/public_key`
+2. зберігає `public_key` в `ECPKey`
+3. повертає `private_key`
+
+### Приклад у RegisterView
+
+```python
+from ecp_lib.auth import create_user_keys
+
+
+class RegisterView(CreateView):
+    ...
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+
+        private_key = create_user_keys(self.object)
+
+        response["Content-Disposition"] = 'attachment; filename="private.pem"'
+        response.write(private_key)
+        return response
+```
+
+## Читання private key із uploaded файлу
+
+```python
+from ecp_lib.auth import read_private_key
+
+private_key = read_private_key(request.FILES["private_key"])
+```
+
+## Challenge helper-и
+
+### create_challenge
+
+```python
+from ecp_lib.auth import create_challenge
+
+challenge = create_challenge()
+```
+
+Повертає простий рядок для підпису.
+
+### verify_challenge
+
+```python
+from ecp_lib.auth import verify_challenge
+
+is_valid = verify_challenge(private_key, public_key, challenge)
+```
+
+Функція:
+
+1. підписує challenge приватним ключем
+2. перевіряє цей підпис через public key
+
+Це зручно, якщо треба перевірити, що ключова пара коректна.
+
+## authenticate_with_private_key
+
+```python
+from ecp_lib.auth import authenticate_with_private_key
+
+user, error = authenticate_with_private_key(
+    request=request,
+    username="alice",
+    password="secret",
+    private_key=private_key_pem,
+)
+```
+
+Функція робить:
+
+1. перевіряє `username/password` через Django `authenticate`
+2. знаходить `ECPKey` користувача
+3. створює test challenge
+4. підписує challenge приватним ключем
+5. перевіряє підпис через збережений public key
+
+Результат:
+
+- `(user, None)` якщо все добре
+- `(None, error_message)` якщо ні
+
+## Middleware
+
+`ECPMiddleware` перевіряє login POST запити.
+
+Логіка:
+
+1. якщо запит не `POST`, нічого не робить
+2. якщо в запиті немає `signature`, нічого не робить
+3. якщо `signature` є:
+   - читає `username`
+   - читає `signature`
+   - бере `challenge` або `password` як payload
+   - знаходить public key користувача
+   - перевіряє RSA-підпис
+
+Якщо перевірка не проходить:
+
+- повертає `403`
+
+Якщо проходить:
+
+- пропускає запит далі
+
+## Які поля очікує middleware
+
+Для login POST:
+
+- `username`
+- `signature`
+- `challenge` або `password`
+
+## Безпека
+
+Бібліотека використовує:
+
+- RSA 2048+
+- RSA-PSS
+- SHA-256
+- base64 для підпису
+- PEM валідацію
+- базову санітизацію input
+
+Ключове правило:
+
+- `private_key` не зберігається на сервері
+
+## Приклад мінімальної інтеграції
+
+### settings.py
+
+```python
+INSTALLED_APPS = [
+    "ecp_lib",
+]
+
+MIDDLEWARE = [
+    "ecp_lib.middleware.ECPMiddleware",
+]
+```
+
+### RegisterView
+
+```python
+from ecp_lib.auth import create_user_keys
+
+
+class RegisterView(CreateView):
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        private_key = create_user_keys(self.object)
+        response["Content-Disposition"] = 'attachment; filename="private.pem"'
+        response.write(private_key)
+        return response
+```
+
+### LoginView
+
+```python
+from ecp_lib.auth import authenticate_with_private_key, read_private_key
+
+
+class LoginView(FormView):
+    def form_valid(self, form):
+        private_key = read_private_key(self.request.FILES["private_key"])
+
+        user, error = authenticate_with_private_key(
+            request=self.request,
+            username=form.cleaned_data["username"],
+            password=form.cleaned_data["password"],
+            private_key=private_key,
+        )
+
+        if user is None:
+            form.add_error(None, error)
+            return self.form_invalid(form)
+
+        return super().form_valid(form)
+```
+
+## Тести
 
 ```bash
-ecp-lib --help
+python3 -m unittest discover -s tests -v
 ```
-
-Module form is also available:
-
-```bash
-python -m ecp_lib.cli --help
-```
-
-Commands:
-- `ecp-lib generate-keys [--key-size 2048] [--format pem|json]`
-- `ecp-lib validate-keys --private-key-file <path> --public-key-file <path>`
-- `ecp-lib sign --private-key-file <path> (--payload <text> | --payload-file <path>)`
-- `ecp-lib verify --public-key-file <path> --signature <base64> (--payload <text> | --payload-file <path>)`
-
-Exit codes:
-- `0`: success
-- `1`: verification failed (`verify` command)
-- `2`: input/validation/runtime error
-
-Typical flow:
-
-```bash
-ecp-lib generate-keys --format json
-ecp-lib sign --private-key-file private.pem --payload "hello"
-ecp-lib verify --public-key-file public.pem --payload "hello" --signature "<base64>"
-```
-
-## Error Handling
-
-Domain-level exceptions derive from `ECPError` and include:
-- `code`: machine-readable error code
-- `details`: structured context for debugging
-
-This allows detailed diagnostics for developers while keeping business logic explicit.
