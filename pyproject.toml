@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "django-eds-auth"
+version = "0.1.0"
+description = "Django authentication backend and validators for EDS (electronic digital signature) login."
+authors = ["T0ks1k24 <toksamal2004@gmail.com>"]
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/t0ks1k24/django-eds-auth"
+repository = "https://github.com/t0ks1k24/django-eds-auth"
+keywords = ["django", "authentication", "eds", "digital-signature", "x509"]
+packages = [{ include = "django_eds_auth" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Django",
+    "Framework :: Django :: 5.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+django = "^6.0.3"
+djangorestframework = "^3.17.1"
+django-filter = "^25.2"
+cryptography = "^44.0.3"
+pycryptodome = "^3.23.0"
+asn1crypto = "^1.5.1"
+certvalidator = "^0.11.1"
+jinja2 = "^3.1.6"
+psycopg = { version = "^3.2.10", extras = ["binary"] }
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
