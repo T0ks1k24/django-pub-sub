@@ -1,0 +1,4 @@
+.venv
+dist
+ecp_lib.egg-info
+*.pyc
