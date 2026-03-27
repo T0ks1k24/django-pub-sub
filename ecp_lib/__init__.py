@@ -16,7 +16,6 @@ __all__ = [
     "sanitize",
     "sign",
     "validate_public_key",
-    "verify_challenge",
     "verify",
 ]
 
@@ -31,7 +30,6 @@ _EXPORTS = {
     "sanitize": ("ecp_lib.validators", "sanitize"),
     "sign": ("ecp_lib.crypto", "sign"),
     "validate_public_key": ("ecp_lib.validators", "validate_public_key"),
-    "verify_challenge": ("ecp_lib.auth", "verify_challenge"),
     "verify": ("ecp_lib.crypto", "verify"),
 }
 

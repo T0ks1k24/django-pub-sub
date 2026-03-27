@@ -37,19 +37,6 @@ def create_challenge() -> str:
     return f"login-test:{secrets.token_urlsafe(16)}"
 
 
-def verify_challenge(private_key: str, public_key: str, challenge: str) -> bool:
-    """
-    Підписує challenge приватним ключем і одразу перевіряє його через public key.
-    Це зручно для локальної перевірки, що пара ключів належить одна одній.
-    """
-    # Підписуємо challenge приватним ключем і одразу перевіряємо через public key.
-    # Це зручно як для тестів, так і для швидкої перевірки пари ключів.
-    validate_public_key(public_key)
-    challenge = sanitize(challenge)
-    signature = sign(private_key, challenge)
-    return verify(public_key, challenge, signature)
-
-
 def read_private_key(file: Any) -> str:
     """
     Читає private key з uploaded файлу Django.

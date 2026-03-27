@@ -58,10 +58,3 @@ def validate_username(username: Any) -> str:
     return cleaned
 
 
-def validate_signature(signature: str) -> str:
-    # На цьому рівні лише перевіряємо форму підпису.
-    # Сама криптографічна перевірка відбувається в crypto.verify().
-    cleaned = sanitize(signature)
-    if not _SIGNATURE_PATTERN.fullmatch(cleaned):
-        raise ValueError("Signature format is invalid.")
-    return cleaned

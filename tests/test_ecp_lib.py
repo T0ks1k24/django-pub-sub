@@ -42,7 +42,6 @@ from ecp_lib.auth import (
     create_challenge,
     create_user_keys,
     read_private_key,
-    verify_challenge,
 )
 from ecp_lib.crypto import generate_keys, sign, verify
 from ecp_lib.middleware import ECPMiddleware
@@ -74,10 +73,7 @@ class ECPLibTests(TestCase):
     def test_create_challenge_returns_non_empty_string(self) -> None:
         challenge = create_challenge()
         self.assertTrue(challenge.startswith("login-test:"))
-
-    def test_verify_challenge_for_matching_keys(self) -> None:
-        self.assertTrue(verify_challenge(self.private_key, self.public_key, create_challenge()))
-
+        
     def test_read_private_key_from_uploaded_file(self) -> None:
         uploaded_file = SimpleUploadedFile("private.pem", self.private_key.encode("utf-8"))
 
@@ -117,28 +113,53 @@ class ECPLibTests(TestCase):
         with self.assertRaises(ValueError):
             validate_public_key("bad key")
 
-    def test_middleware_blocks_bad_signature(self) -> None:
+
+    def test_middleware_passes_valid_private_key_string(self) -> None:
         middleware = ECPMiddleware(lambda request: HttpResponse("ok"))
         request = self.factory.post(
             "/login/",
-            data={"username": "alice", "signature": "bad", "challenge": "hello"},
-        )
-
-        response = middleware(request)
-
-        self.assertEqual(response.status_code, 403)
-
-    def test_middleware_passes_valid_signature(self) -> None:
-        signature = sign(self.private_key, "hello")
-        middleware = ECPMiddleware(lambda request: HttpResponse("ok"))
-        request = self.factory.post(
-            "/login/",
-            data={"username": "alice", "signature": signature, "challenge": "hello"},
+            data={"username": "alice", "password": "secret", "private_key": self.private_key},
         )
 
         response = middleware(request)
 
         self.assertEqual(response.status_code, 200)
+
+    def test_middleware_passes_valid_private_key_file(self) -> None:
+        middleware = ECPMiddleware(lambda request: HttpResponse("ok"))
+        uploaded_file = SimpleUploadedFile("private.pem", self.private_key.encode("utf-8"))
+        request = self.factory.post(
+            "/login/",
+            data={"username": "alice", "password": "secret", "private_key": uploaded_file},
+        )
+
+        response = middleware(request)
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_middleware_passes_valid_private_key_file_with_login_form_field_name(self) -> None:
+        middleware = ECPMiddleware(lambda request: HttpResponse("ok"))
+        uploaded_file = SimpleUploadedFile("private.pem", self.private_key.encode("utf-8"))
+        request = self.factory.post(
+            "/login/",
+            data={"username": "alice", "password": "secret", "private_key_file": uploaded_file},
+        )
+
+        response = middleware(request)
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_middleware_blocks_wrong_private_key(self) -> None:
+        wrong_private_key, _ = generate_keys()
+        middleware = ECPMiddleware(lambda request: HttpResponse("ok"))
+        request = self.factory.post(
+            "/login/",
+            data={"username": "alice", "password": "secret", "private_key": wrong_private_key},
+        )
+
+        response = middleware(request)
+
+        self.assertEqual(response.status_code, 403)
 
     def test_sanitize_rejects_empty_value(self) -> None:
         with self.assertRaises(ValueError):
