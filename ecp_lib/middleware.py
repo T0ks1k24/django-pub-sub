@@ -1,5 +1,3 @@
-"""Middleware that validates ECP-related login payloads."""
-
 from __future__ import annotations
 
 import json
@@ -12,12 +10,10 @@ from .validators import sanitize, validate_username
 
 logger = logging.getLogger(__name__)
 
-_LOGIN_FIELDS = {"username", "password", "private_key", "private_key_file", "key_file"}
+_LOGIN_FIELDS = {"username", "password",  "key_file"}
 
 
-class ECPMiddleware:  # pylint: disable=too-few-public-methods
-    """Reject malformed ECP login requests before they reach the view layer."""
-
+class ECPMiddleware:
     def __init__(self, get_response: Any) -> None:
         self.get_response = get_response
 
@@ -27,39 +23,37 @@ class ECPMiddleware:  # pylint: disable=too-few-public-methods
 
         payload = self._get_payload(request)
 
-        if (
-            not _LOGIN_FIELDS & set(payload)
-            and not _LOGIN_FIELDS & set(getattr(request, "FILES", {}))
-        ):
+        # Якщо немає ECP-полів — не наш запит
+        if not _LOGIN_FIELDS & set(payload) and not _LOGIN_FIELDS & set(getattr(request, "FILES", {})):
             return self.get_response(request)
 
         errors = self._validate(request, payload)
+
         if errors:
-            logger.warning(
-                "ECPMiddleware validation failed: path=%s errors=%s",
-                request.path,
-                errors,
-            )
+            logger.warning("ECPMiddleware validation failed: path=%s errors=%s", request.path, errors)
             return JsonResponse({"detail": "Invalid request.", "errors": errors}, status=400)
 
         logger.debug("ECPMiddleware validation passed: path=%s", request.path)
         return self.get_response(request)
 
-    def _validate(self, request: Any, payload: dict[str, Any]) -> list[str]:
+    def _validate(self, request: Any, payload: dict) -> list[str]:
         errors = []
 
+        # username
         username = payload.get("username", "")
         try:
             validate_username(username)
         except ValueError as exc:
             errors.append(f"username: {exc}")
 
+        # password
         password = payload.get("password", "")
         try:
             sanitize(password, max_length=256)
         except ValueError as exc:
             errors.append(f"password: {exc}")
 
+        # private key — тільки якщо це логін (не реєстрація)
         key_value = self._get_key(request, payload)
         if key_value is not None:
             try:
@@ -69,20 +63,22 @@ class ECPMiddleware:  # pylint: disable=too-few-public-methods
 
         return errors
 
-    def _get_key(self, request: Any, payload: dict[str, Any]) -> str | None:
+    def _get_key(self, request: Any, payload: dict) -> str | None:
+        # Спочатку шукаємо текстове поле
         if value := payload.get("private_key"):
             return value
 
+        # Потім uploaded файл
         files = getattr(request, "FILES", {})
         for field in ("private_key", "private_key_file", "key_file"):
-            if uploaded_file := files.get(field):
-                content = uploaded_file.read()
-                uploaded_file.seek(0)
+            if f := files.get(field):
+                content = f.read()
+                f.seek(0)
                 return content.decode("utf-8") if isinstance(content, bytes) else content
 
         return None
 
-    def _get_payload(self, request: Any) -> dict[str, Any]:
+    def _get_payload(self, request: Any) -> dict:
         if request.content_type == "application/json":
             try:
                 data = json.loads(request.body.decode("utf-8") or "{}")
@@ -90,4 +86,4 @@ class ECPMiddleware:  # pylint: disable=too-few-public-methods
             except (UnicodeDecodeError, json.JSONDecodeError):
                 return {}
 
-        return request.POST.dict() if hasattr(request.POST, "dict") else dict(request.POST)
+        return request.POST
