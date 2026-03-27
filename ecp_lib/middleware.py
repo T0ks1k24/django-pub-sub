@@ -10,7 +10,7 @@ from .validators import sanitize, validate_username
 
 logger = logging.getLogger(__name__)
 
-_LOGIN_FIELDS = {"username", "password", "private_key", "private_key_file", "key_file"}
+_LOGIN_FIELDS = {"username", "password",  "key_file"}
 
 
 class ECPMiddleware:
