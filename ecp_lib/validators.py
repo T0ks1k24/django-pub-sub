@@ -1,3 +1,5 @@
+"""Validation helpers for user input and RSA public keys."""
+
 from __future__ import annotations
 
 import re
@@ -6,29 +8,21 @@ from typing import Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-# Username пропускаємо тільки через whitelist.
-# Це простий спосіб відсікти сміття і частину інʼєкційних payload-ів.
 _USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_.@-]{1,150}$")
-
-# Підпис очікується як base64-рядок.
-_SIGNATURE_PATTERN = re.compile(r"^[A-Za-z0-9+/=]{1,8192}$")
-
-# Public key має бути саме в PEM-форматі.
 _PUBLIC_KEY_PATTERN = re.compile(
     r"^-----BEGIN PUBLIC KEY-----\n(?:[A-Za-z0-9+/=]+\n)+-----END PUBLIC KEY-----\n?$"
 )
 
 
-def sanitize(value: str) -> str:
-    # Базова санітизація для вхідних значень:
-    # прибираємо зайві пробіли і блокуємо явно підозрілі значення.
+def sanitize(value: str, *, max_length: int = 8192) -> str:
+    """Strip and validate a generic text input."""
     if not isinstance(value, str):
         raise ValueError("Value must be a string.")
 
     cleaned = value.strip()
     if not cleaned:
         raise ValueError("Value cannot be empty.")
-    if len(cleaned) > 8192:
+    if len(cleaned) > max_length:
         raise ValueError("Value is too long.")
     if any(ord(char) < 32 and char not in "\n\r\t" for char in cleaned):
         raise ValueError("Value contains control characters.")
@@ -36,7 +30,7 @@ def sanitize(value: str) -> str:
 
 
 def validate_public_key(key: str) -> None:
-    # Перевіряємо і синтаксис PEM, і реальну структуру RSA public key.
+    """Validate that a string contains a PEM-encoded RSA public key."""
     normalized = sanitize(key).replace("\r\n", "\n")
     if not normalized.endswith("\n"):
         normalized = f"{normalized}\n"
@@ -51,10 +45,8 @@ def validate_public_key(key: str) -> None:
 
 
 def validate_username(username: Any) -> str:
-    # Окрема валідація username потрібна для безпечного пошуку користувача в БД.
+    """Validate and normalize a username used in authentication flows."""
     cleaned = sanitize(username)
     if not _USERNAME_PATTERN.fullmatch(cleaned):
         raise ValueError("Username contains unsupported characters.")
     return cleaned
-
-
