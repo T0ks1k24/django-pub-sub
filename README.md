@@ -1,32 +1,30 @@
 # ecp-lib
 
-`ecp-lib` — Django-бібліотека для входу з `username + password + private.pem`.
-Вона генерує RSA-ключі, зберігає `public_key` користувача і дає middleware, яке перевіряє, що завантажений приватний ключ відповідає ключу в БД.
+`ecp-lib` is a Django-oriented package for RSA key generation, public key storage, login helpers, and request validation middleware.
 
-## Що вміє бібліотека
+The package covers two related concerns:
 
-- генерувати пару `private_key/public_key`
-- зберігати `public_key` у моделі `ECPKey`
-- читати `private.pem` з upload
-- перевіряти пару `username/password/private_key`
-- відсікати невалідні логін-запити ще в middleware
-- логувати, чи запит взагалі дійшов до middleware і на якому кроці впав
+- generating an RSA key pair for a user and storing only the public key on the server;
+- validating login-like requests that carry `username`, `password`, and a private key field or upload.
 
-## Що бібліотека не робить
+It does not provide ready-made views, forms, URLs, or session login flow.
 
-- не дає готових `views` або `urls`
-- не логінить користувача сама по собі
-- не зберігає `private.pem` на сервері
-- не будує challenge-response протокол
-
-## Встановлення
+## Installation
 
 ```bash
 pip install ecp-lib
 pip install "ecp-lib[django]"
 ```
 
-## Публічне API
+Base dependency:
+
+- `cryptography>=46.0.6`
+
+Optional Django extra:
+
+- `django>=4.2,<6.0`
+
+## Public API
 
 ```python
 from ecp_lib import (
@@ -44,25 +42,22 @@ from ecp_lib import (
 )
 ```
 
-Основний Django-flow використовує:
+The root package uses lazy imports, so it is safe to include in `INSTALLED_APPS` without importing models too early.
 
-- `create_user_keys()`
-- `read_private_key()`
-- `authenticate_with_private_key()`
-- `ECPMiddleware`
+## Main Django flow
 
-## Основний flow
+### 1. Registration
 
-### 1. Реєстрація
+After creating a user, call `create_user_keys(user)`.
 
-Після створення користувача виклич `create_user_keys(user)`.
-Функція:
+What it does:
 
-1. генерує нову RSA-пару
-2. зберігає `public_key` у `ECPKey`
-3. повертає `private_key` як PEM-рядок
+1. Generates a new RSA key pair.
+2. Validates the generated public key.
+3. Stores the public key in `ECPKey`.
+4. Returns the private key PEM string so the view can return it to the user.
 
-Типовий варіант: віддати цей PEM користувачу як файл `private.pem`.
+Example:
 
 ```python
 from django.http import HttpResponse
@@ -70,7 +65,7 @@ from django.http import HttpResponse
 from ecp_lib.auth import create_user_keys
 
 
-def register_success_response(user):
+def registration_success(request, user):
     private_key = create_user_keys(user)
 
     response = HttpResponse(private_key, content_type="application/x-pem-file")
@@ -78,28 +73,20 @@ def register_success_response(user):
     return response
 ```
 
-### 2. Логін
+### 2. Login helper
 
-Форма логіну надсилає:
-
-- `username`
-- `password`
-- файл `private_key` або `private_key_file`
-
-У view можна зчитати PEM і перевірити його через helper:
+In your login view, read the uploaded PEM and pass it to `authenticate_with_private_key(...)`.
 
 ```python
 from django.contrib.auth import login
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render
 
 from ecp_lib.auth import authenticate_with_private_key, read_private_key
 
 
 def login_view(request):
     if request.method == "POST":
-        private_key = read_private_key(
-            request.FILES["private_key_file"]
-        )
+        private_key = read_private_key(request.FILES["private_key_file"])
 
         user, error = authenticate_with_private_key(
             request=request,
@@ -109,64 +96,79 @@ def login_view(request):
         )
 
         if error:
-            ...
+            return render(request, "login.html", {"error": error}, status=400)
 
         login(request, user)
         return redirect("dashboard")
 
-    ...
+    return render(request, "login.html")
 ```
 
-`authenticate_with_private_key()`:
+`authenticate_with_private_key(...)`:
 
-1. валідовує вхідні дані
-2. перевіряє `username/password` через Django `authenticate()`
-3. бере `public_key` користувача з `ECPKey`
-4. створює службовий payload
-5. підписує його переданим `private_key`
-6. перевіряє підпис через збережений `public_key`
+1. Validates `username`, `password`, and `private_key`.
+2. Calls Django `authenticate(...)`.
+3. Reads the user's stored `public_key` from `ECPKey`.
+4. Creates a one-time challenge string.
+5. Signs that challenge with the provided private key.
+6. Verifies the signature with the stored public key.
 
-Повертає:
+Return value:
 
-- `(user, None)` при успіху
-- `(None, "error text")` при помилці
+- `(user, None)` on success;
+- `(None, "error message")` on failure.
 
 ## Middleware
 
-[`ecp_lib/middleware.py`](/home/toksik/Developer/hackaton/django-pub-sub/ecp_lib/middleware.py) працює як ранній guard для `POST`-запитів.
+`ECPMiddleware` is an early request validator for `POST` requests.
 
-Middleware реагує на запит, якщо бачить:
+It runs only when the request contains at least one ECP-related field:
 
 - `username`
 - `password`
-- `private_key` як текстове поле або файл `private_key`
-- або файл `private_key_file`
+- `private_key`
+- `private_key_file`
+- `key_file`
 
-Підтримувані content types:
+Supported payload types:
 
 - `application/x-www-form-urlencoded`
 - `multipart/form-data`
 - `application/json`
 
-Що воно робить:
+What the middleware does:
 
-1. перевіряє, що це `POST`
-2. зчитує `username`, `password` і приватний ключ
-3. знаходить `public_key` користувача в БД
-4. генерує підпис з переданого приватного ключа
-5. перевіряє підпис через `public_key`
-6. при помилці повертає `403`
-7. при успіху пропускає запит далі у view
+1. Skips all non-`POST` requests.
+2. Extracts request payload from `POST` data or JSON body.
+3. Detects whether the request looks like an ECP-related request.
+4. Validates `username`.
+5. Validates `password`.
+6. Reads a private key from text field or uploaded file if present.
+7. Sanitizes the private key value.
+8. Returns `400` with JSON errors if validation fails.
+9. Passes the request through untouched if validation succeeds.
 
-Важливо:
+Important behavior:
 
-- middleware не створює сесію користувача
-- middleware не замінює `django.contrib.auth.login`
-- middleware лише відсікає невалідні запити до того, як вони дійдуть до view
+- middleware does not authenticate the user;
+- middleware does not call Django `login()`;
+- middleware does not compare the private key against the stored public key;
+- middleware resets uploaded file pointer with `seek(0)` after reading, so the view can read the file again.
 
-## Підключення до Django
+Example error response:
 
-У `settings.py`:
+```json
+{
+  "detail": "Invalid request.",
+  "errors": [
+    "username: Username contains unsupported characters."
+  ]
+}
+```
+
+## Django integration
+
+In `settings.py`:
 
 ```python
 INSTALLED_APPS = [
@@ -181,15 +183,15 @@ MIDDLEWARE = [
 ]
 ```
 
-Після цього виконай міграції:
+Then run migrations:
 
 ```bash
 python manage.py migrate
 ```
 
-## Логування middleware
+## Logging
 
-Щоб бачити, чи middleware спрацьовує, додай logger у `settings.py`:
+Middleware logs through `ecp_lib.middleware`.
 
 ```python
 LOGGING = {
@@ -210,14 +212,7 @@ LOGGING = {
 }
 ```
 
-У логах буде видно:
-
-- що запит зайшов у middleware
-- чому middleware пропустив запит
-- чому middleware відхилив запит
-- чи перевірка пройшла успішно
-
-## Криптографічні helper-и
+## Low-level helpers
 
 ### `generate_keys()`
 
@@ -227,11 +222,13 @@ from ecp_lib.crypto import generate_keys
 private_key, public_key = generate_keys()
 ```
 
-- повертає PEM-рядки
-- генерує тільки RSA-ключі
-- мінімальна довжина ключа: `2048`
+Behavior:
 
-### `sign()` і `verify()`
+- generates an RSA key pair;
+- returns two PEM strings;
+- rejects key sizes smaller than `2048`.
+
+### `sign()` and `verify()`
 
 ```python
 from ecp_lib.crypto import sign, verify
@@ -240,64 +237,82 @@ signature = sign(private_key, "hello")
 is_valid = verify(public_key, "hello", signature)
 ```
 
-Бібліотека використовує RSA-PSS + SHA-256.
+Implementation details:
 
-### `create_challenge()` і `verify_challenge()`
+- RSA-PSS
+- SHA-256
+- base64-encoded signature
 
-Це допоміжні helper-и для тестів або локальної перевірки пари ключів.
-Вони не є основою поточного login-flow через HTML-форму.
+### `create_challenge()`
 
-## Валідація
+```python
+from ecp_lib.auth import create_challenge
 
-[`ecp_lib/validators.py`](/home/toksik/Developer/hackaton/django-pub-sub/ecp_lib/validators.py) містить:
+challenge = create_challenge()
+```
+
+Returns a unique login challenge string with the prefix `login-test:`.
+
+### `read_private_key()`
+
+Reads an uploaded Django file, decodes it as UTF-8, sanitizes it, and returns the PEM text.
+
+## Validation
+
+`ecp_lib.validators` currently exports:
 
 - `sanitize(value)`
 - `validate_username(username)`
 - `validate_public_key(public_key)`
 
-Перевіряється:
+What is validated:
 
-- тип і непорожність значення
-- відсутність небезпечних control characters
-- PEM-формат `public_key`
-- RSA-тип ключа
-- мінімальна довжина ключа `2048`
+- string type and non-empty value;
+- maximum input length;
+- control characters in raw input;
+- username allowed character set;
+- PEM structure of the public key;
+- RSA key type and minimum size `2048`.
 
-## Модель
+## Data model
 
-[`ecp_lib/models.py`](/home/toksik/Developer/hackaton/django-pub-sub/ecp_lib/models.py):
+`ECPKey` stores:
 
-```python
-class ECPKey(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ecp_key")
-    public_key = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
-```
+- `user` as `OneToOneField`;
+- `public_key` as `TextField`;
+- `created_at` as `DateTimeField(auto_now_add=True)`.
 
-На сервері зберігається тільки `public_key`.
+Only the public key is stored on the server.
 
-## Тести
+## Tests
 
-Запуск:
+Run:
 
 ```bash
 pytest -q
 ```
 
-Покрито:
+Current test coverage includes:
 
-- генерацію ключів
-- підпис і перевірку
-- збереження `public_key`
-- читання `private.pem`
-- helper-и з `auth.py`
-- middleware для form POST
-- middleware для JSON POST
+- RSA key generation;
+- signing and signature verification;
+- public key validation;
+- username and input sanitization;
+- creation and replacement of `ECPKey`;
+- reading uploaded private keys;
+- login helper behavior;
+- middleware behavior for form uploads and validation failures.
 
-## Безпека
+## Limitations
 
-- не зберігай `private.pem` у БД
-- віддавай `private.pem` користувачу тільки один раз після реєстрації
-- перевіряй, що в БД лежить тільки валідний `public_key`
-- використовуй HTTPS, бо `password` і файл ключа передаються на сервер
-- middleware варто ставити як ранній бар'єр, але не замість перевірки у view
+- no built-in views, forms, or URL routes;
+- no challenge-response session protocol beyond the in-memory helper check;
+- no replay protection storage or server-side nonce tracking;
+- middleware validates request shape only and is not a replacement for authentication logic in the view.
+
+## Security notes
+
+- never store `private.pem` on the server;
+- return the private key to the user only at the moment you create it;
+- use HTTPS because password and private key travel to the server;
+- keep the middleware as an early input-validation layer, not as the only authentication check.
