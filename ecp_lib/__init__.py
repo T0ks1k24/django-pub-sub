@@ -1,10 +1,22 @@
+"""Public package exports for the ECP library."""
+
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
-# Кореневий модуль нічого не імпортує напряму, а працює через lazy imports.
-# Це важливо для Django, щоб пакет безпечно підключався через INSTALLED_APPS
-# і не тягнув моделі занадто рано під час apps.populate().
+if TYPE_CHECKING:
+    from .auth import (
+        authenticate_with_private_key,
+        create_challenge,
+        create_user_keys,
+        read_private_key,
+    )
+    from .crypto import generate_keys, sign, verify
+    from .middleware import ECPMiddleware
+    from .models import ECPKey
+    from .validators import sanitize, validate_public_key
+
 __all__ = [
     "authenticate_with_private_key",
     "create_challenge",
@@ -35,8 +47,7 @@ _EXPORTS = {
 
 
 def __getattr__(name: str):
-    # Ледачий імпорт дозволяє працювати з API як з "плоским" пакетом,
-    # але не створює проблем під час старту Django.
+    """Lazily resolve public exports to avoid early Django model imports."""
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

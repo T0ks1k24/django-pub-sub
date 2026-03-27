@@ -1,3 +1,5 @@
+"""Authentication helpers built around Django auth plus ECP key checks."""
+
 from __future__ import annotations
 
 import secrets
@@ -11,17 +13,11 @@ from .validators import sanitize, validate_public_key, validate_username
 
 
 def create_user_keys(user: Any) -> str:
-    """
-    Генерує нову пару ключів для користувача.
-    У БД зберігається тільки public key.
-    Private key повертається як PEM-рядок, щоб view міг віддати його на скачування.
-    """
-    # Генеруємо нову пару ключів для щойно створеного користувача.
-    # У БД кладемо тільки public key, а private key повертаємо назовні.
+    """Generate a fresh key pair for a user and persist the public key."""
     private_key, public_key = generate_keys()
     validate_public_key(public_key)
 
-    ECPKey.objects.update_or_create(
+    ECPKey.objects.update_or_create(  # pylint: disable=no-member
         user=user,
         defaults={"public_key": public_key},
     )
@@ -29,21 +25,12 @@ def create_user_keys(user: Any) -> str:
 
 
 def create_challenge() -> str:
-    """
-    Повертає простий challenge для перевірки ключа.
-    Використовується як payload для підпису приватним ключем.
-    """
-    # Простий одноразовий challenge, який використовується як payload для підпису.
+    """Return a one-time challenge used during ECP authentication."""
     return f"login-test:{secrets.token_urlsafe(16)}"
 
 
 def read_private_key(file: Any) -> str:
-    """
-    Читає private key з uploaded файлу Django.
-    Повертає PEM як рядок.
-    """
-    # Працюємо з uploaded file без прив'язки до конкретного view.
-    # Повертаємо просто PEM-рядок.
+    """Read a PEM private key from an uploaded Django file object."""
     if file is None:
         raise ValueError("Private key file is required.")
 
@@ -62,46 +49,44 @@ def authenticate_with_private_key(
     password: str,
     private_key: str,
 ) -> tuple[Any | None, str | None]:
-    """
-    1. Перевіряє username/password через стандартний Django authenticate
-    2. Бере public key користувача з ECPKey
-    3. Створює challenge
-    4. Підписує challenge приватним ключем
-    5. Перевіряє підпис через збережений public key
-    """
-    # Тут логіка навмисно не залежить від view:
-    # на вході лише request, облікові дані і private key.
+    """Authenticate a user with Django credentials and an RSA private key."""
+    user = None
+    error = None
+    public_key = None
+    challenge = None
+    signature = None
+
     try:
         username = validate_username(username)
         password = sanitize(password)
         private_key = sanitize(private_key)
     except ValueError as exc:
-        return None, str(exc)
+        error = str(exc)
 
-    # Спочатку перевіряємо стандартні username/password через Django.
-    user = authenticate(request=request, username=username, password=password)
-    if user is None:
-        return None, "Invalid username or password."
+    if error is None:
+        user = authenticate(request=request, username=username, password=password)
+        if user is None:
+            error = "Invalid username or password."
 
-    # Public key має вже бути прив'язаний до користувача в ECPKey.
-    public_key = getattr(getattr(user, "ecp_key", None), "public_key", None)
-    if not isinstance(public_key, str):
-        return None, "Public key not found for user."
+    if error is None:
+        public_key = getattr(getattr(user, "ecp_key", None), "public_key", None)
+        if not isinstance(public_key, str):
+            error = "Public key not found for user."
 
-    try:
-        validate_public_key(public_key)
-    except ValueError as exc:
-        return None, str(exc)
+    if error is None:
+        try:
+            validate_public_key(public_key)
+        except ValueError as exc:
+            error = str(exc)
 
-    # Створюємо test challenge і підписуємо його приватним ключем.
-    challenge = create_challenge()
-    try:
-        signature = sign(private_key, challenge)
-    except ValueError as exc:
-        return None, str(exc)
+    if error is None:
+        challenge = create_challenge()
+        try:
+            signature = sign(private_key, challenge)
+        except ValueError as exc:
+            error = str(exc)
 
-    # Якщо public key з БД не підтверджує підпис, значить private key чужий або неправильний.
-    if not verify(public_key, challenge, signature):
-        return None, "Private key does not match stored public key."
+    if error is None and not verify(public_key, challenge, signature):
+        error = "Private key does not match stored public key."
 
-    return user, None
+    return user if error is None else None, error

@@ -1,3 +1,5 @@
+"""RSA key generation and signing helpers used by the ECP flows."""
+
 from __future__ import annotations
 
 import base64
@@ -7,14 +9,11 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-# Мінімальний розмір RSA-ключа.
-# Менші ключі одразу відкидаємо як небезпечні.
 MIN_RSA_KEY_SIZE = 2048
 
 
 def generate_keys(*, key_size: int = MIN_RSA_KEY_SIZE) -> tuple[str, str]:
-    # Генерує нову пару ключів і повертає їх у PEM.
-    # Саме PEM найзручніше зберігати в БД або віддавати користувачу як файл.
+    """Generate a new RSA private/public key pair in PEM format."""
     if key_size < MIN_RSA_KEY_SIZE:
         raise ValueError(f"RSA key size must be at least {MIN_RSA_KEY_SIZE} bits.")
 
@@ -35,8 +34,7 @@ def generate_keys(*, key_size: int = MIN_RSA_KEY_SIZE) -> tuple[str, str]:
 
 
 def sign(private_key: str, payload: str) -> str:
-    # Підписуємо payload приватним ключем.
-    # Підпис повертаємо як base64 рядок, щоб його було легко пересилати у формі або JSON.
+    """Sign a text payload with a PEM-encoded RSA private key."""
     key = _load_private_key(private_key)
     payload_bytes = _to_bytes(payload)
     signature = key.sign(
@@ -51,8 +49,7 @@ def sign(private_key: str, payload: str) -> str:
 
 
 def verify(public_key: str, payload: str, signature: str) -> bool:
-    # Перевірка підпису завжди повертає bool.
-    # Це дозволяє використовувати функцію прямо в middleware або helper-функціях.
+    """Verify a base64-encoded signature against a payload and public key."""
     key = _load_public_key(public_key)
     payload_bytes = _to_bytes(payload)
 
@@ -78,7 +75,6 @@ def verify(public_key: str, payload: str, signature: str) -> bool:
 
 
 def _load_private_key(private_key: str) -> rsa.RSAPrivateKey:
-    # Приватний ключ має бути валідним PEM, RSA і не коротшим за 2048 біт.
     if not isinstance(private_key, str) or not private_key.strip():
         raise ValueError("Private key must be a non-empty PEM string.")
 
@@ -94,8 +90,6 @@ def _load_private_key(private_key: str) -> rsa.RSAPrivateKey:
 
 
 def _load_public_key(public_key: str) -> rsa.RSAPublicKey:
-    # Те саме робимо для public key:
-    # перевіряємо PEM, тип ключа і мінімальну довжину.
     if not isinstance(public_key, str) or not public_key.strip():
         raise ValueError("Public key must be a non-empty PEM string.")
 
@@ -111,7 +105,6 @@ def _load_public_key(public_key: str) -> rsa.RSAPublicKey:
 
 
 def _to_bytes(payload: str | bytes) -> bytes:
-    # Криптобібліотека працює з bytes, тому рядки явно кодуємо в UTF-8.
     if isinstance(payload, bytes):
         return payload
     if not isinstance(payload, str):
