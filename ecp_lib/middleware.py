@@ -65,12 +65,12 @@ class ECPMiddleware:
 
     def _get_key(self, request: Any, payload: dict) -> str | None:
         # Спочатку шукаємо текстове поле
-        if value := payload.get("private_key"):
+        if value := payload.get("key_file"):
             return value
 
         # Потім uploaded файл
         files = getattr(request, "FILES", {})
-        for field in ("private_key", "private_key_file", "key_file"):
+        for field in ("key_file"):
             if f := files.get(field):
                 content = f.read()
                 f.seek(0)

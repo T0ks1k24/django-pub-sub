@@ -5,12 +5,15 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, login, get_user_model
+from django.db import transaction
 
 from .crypto import generate_keys, sign, verify
 from .models import ECPKey
 from .validators import sanitize, validate_public_key, validate_username
 
+
+User = get_user_model()
 
 def create_user_keys(user: Any) -> str:
     """Generate a fresh key pair for a user and persist the public key."""
@@ -90,3 +93,16 @@ def authenticate_with_private_key(
         error = "Private key does not match stored public key."
 
     return user if error is None else None, error
+
+def register_and_login_user(request, username, password):
+
+    try:
+        with transaction.atomic():
+            user = User.objects.create_user(username=username, password=password)
+            private_key = create_user_keys(user)
+
+            login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+
+            return user, private_key
+    except Exception as e:
+        raise ValueError(f"Помилка реєстрації: {e}")
