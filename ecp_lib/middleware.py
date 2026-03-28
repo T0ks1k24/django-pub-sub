@@ -18,7 +18,7 @@ class ECPMiddleware:
         self.get_response = get_response
 
     def __call__(self, request: Any) -> Any:
-        if request.method != "POST":
+        if request.path == "/register/" or request.method != "POST":
             return self.get_response(request)
 
         payload = self._get_payload(request)
